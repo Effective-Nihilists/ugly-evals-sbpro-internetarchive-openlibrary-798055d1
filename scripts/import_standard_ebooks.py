@@ -28,24 +28,35 @@ def get_feed(auth: AuthBase):
 
 def map_data(entry) -> dict[str, Any]:
     """Maps Standard Ebooks feed entry to an Open Library import object."""
-    std_ebooks_id = entry.id.replace('https://standardebooks.org/ebooks/', '')
-    image_uris = filter(lambda link: link.rel == IMAGE_REL, entry.links)
+    def _get(obj, key):
+        if isinstance(obj, dict):
+            return obj[key]
+        return getattr(obj, key)
+
+    std_ebooks_id = _get(entry, 'id').replace('https://standardebooks.org/ebooks/', '')
+    links = _get(entry, 'links')
+    image_uris = filter(lambda link: _get(link, 'rel') == IMAGE_REL, links)
 
     # Standard ebooks only has English works at this time ; because we don't have an
     # easy way to translate the language codes they store in the feed to the MARC
     # language codes, we're just gonna handle English for now, and have it error
     # if Standard Ebooks ever adds non-English works.
-    marc_lang_code = 'eng' if entry.language.startswith('en-') else None
+    language = _get(entry, 'language')
+    marc_lang_code = 'eng' if language.startswith('en-') else None
     if not marc_lang_code:
-        raise ValueError(f'Feed entry language {entry.language} is not supported.')
+        raise ValueError(f'Feed entry language {language} is not supported.')
+
+    content = _get(entry, 'content')
+    description = _get(content[0], 'value')
+
     import_record = {
-        "title": entry.title,
+        "title": _get(entry, 'title'),
         "source_records": [f"standard_ebooks:{std_ebooks_id}"],
-        "publishers": [entry.publisher],
-        "publish_date": entry.dc_issued[0:4],
-        "authors": [{"name": author.name} for author in entry.authors],
-        "description": entry.content[0].value,
-        "subjects": [tag.term for tag in entry.tags],
+        "publishers": [_get(entry, 'publisher')],
+        "publish_date": _get(entry, 'dc_issued')[0:4],
+        "authors": [{"name": _get(author, 'name')} for author in _get(entry, 'authors')],
+        "description": description,
+        "subjects": [_get(tag, 'term') for tag in _get(entry, 'tags')],
         "identifiers": {"standard_ebooks": [std_ebooks_id]},
         "languages": [marc_lang_code],
     }
