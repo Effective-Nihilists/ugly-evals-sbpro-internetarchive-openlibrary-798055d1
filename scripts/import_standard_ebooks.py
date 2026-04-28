@@ -28,30 +28,46 @@ def get_feed(auth: AuthBase):
 
 def map_data(entry) -> dict[str, Any]:
     """Maps Standard Ebooks feed entry to an Open Library import object."""
-    std_ebooks_id = entry.id.replace('https://standardebooks.org/ebooks/', '')
-    image_uris = filter(lambda link: link.rel == IMAGE_REL, entry.links)
+    # Handle both attribute-style access (feedparser objects) and dict-style access (raw dicts)
+    def get_field(obj, key, alt_key=None, default=None):
+        if isinstance(obj, dict):
+            return obj.get(key, obj.get(alt_key) if alt_key else default)
+        return getattr(obj, key, getattr(obj, alt_key, default) if alt_key else default)
+
+    std_ebooks_id = get_field(entry, 'id', default='').replace('https://standardebooks.org/ebooks/', '')
+    image_uris = filter(
+        lambda link: get_field(link, 'rel', default='') == IMAGE_REL,
+        get_field(entry, 'links', default=[]),
+    )
 
     # Standard ebooks only has English works at this time ; because we don't have an
     # easy way to translate the language codes they store in the feed to the MARC
     # language codes, we're just gonna handle English for now, and have it error
     # if Standard Ebooks ever adds non-English works.
-    marc_lang_code = 'eng' if entry.language.startswith('en-') else None
+    language = get_field(entry, 'language', 'dcterms_language', default='') or ''
+    marc_lang_code = 'eng' if language.startswith('en-') else None
     if not marc_lang_code:
-        raise ValueError(f'Feed entry language {entry.language} is not supported.')
+        raise ValueError(f'Feed entry language {language} is not supported.')
+
+    content = get_field(entry, 'content', default=[])
+    description = content[0].get('value', '') if content else ''
+
     import_record = {
-        "title": entry.title,
+        "title": get_field(entry, 'title', default=''),
         "source_records": [f"standard_ebooks:{std_ebooks_id}"],
-        "publishers": [entry.publisher],
-        "publish_date": entry.dc_issued[0:4],
-        "authors": [{"name": author.name} for author in entry.authors],
-        "description": entry.content[0].value,
-        "subjects": [tag.term for tag in entry.tags],
+        "publishers": [get_field(entry, 'publisher', 'dcterms_publisher', default='')],
+        "publish_date": (get_field(entry, 'dc_issued', 'published', default=''))[0:4],
+        "authors": [{"name": get_field(author, 'name', default='')} for author in get_field(entry, 'authors', default=[])],
+        "description": description,
+        "subjects": [get_field(tag, 'term', default='') for tag in get_field(entry, 'tags', default=[])],
         "identifiers": {"standard_ebooks": [std_ebooks_id]},
         "languages": [marc_lang_code],
     }
 
-    if image_uris:
-        import_record['cover'] = f'{BASE_SE_URL}{next(iter(image_uris))["href"]}'
+    image_uris_list = list(image_uris)
+    if image_uris_list:
+        href = image_uris_list[0].get("href", "")
+        import_record['cover'] = f'{BASE_SE_URL}{href}' if href.startswith('/') else href
 
     return import_record
 
