@@ -26,32 +26,62 @@ def get_feed(auth: AuthBase):
     return feedparser.parse(r.text)
 
 
+def _get(entry, key, default=None):
+    """Gets a value from an entry whether it's a dict or an object with attributes."""
+    if isinstance(entry, dict):
+        return entry.get(key, default)
+    return getattr(entry, key, default)
+
+
 def map_data(entry) -> dict[str, Any]:
     """Maps Standard Ebooks feed entry to an Open Library import object."""
-    std_ebooks_id = entry.id.replace('https://standardebooks.org/ebooks/', '')
-    image_uris = filter(lambda link: link.rel == IMAGE_REL, entry.links)
+    entry_id = _get(entry, 'id', '')
+    std_ebooks_id = entry_id.replace('https://standardebooks.org/ebooks/', '')
+
+    links = _get(entry, 'links', [])
+    if isinstance(links, list):
+        image_uris = [
+            link if isinstance(link, dict) else {'href': link.href, 'rel': link.rel}
+            for link in links
+            if (_get(link, 'rel') == IMAGE_REL)
+        ]
+    else:
+        image_uris = []
 
     # Standard ebooks only has English works at this time ; because we don't have an
     # easy way to translate the language codes they store in the feed to the MARC
     # language codes, we're just gonna handle English for now, and have it error
     # if Standard Ebooks ever adds non-English works.
-    marc_lang_code = 'eng' if entry.language.startswith('en-') else None
+    language = _get(entry, 'language', '')
+    marc_lang_code = 'eng' if language.startswith('en-') else None
     if not marc_lang_code:
-        raise ValueError(f'Feed entry language {entry.language} is not supported.')
+        raise ValueError(f'Feed entry language {language} is not supported.')
+
+    authors_raw = _get(entry, 'authors', [])
+    authors = [{"name": _get(a, 'name')} for a in authors_raw]
+
+    content_raw = _get(entry, 'content', [{}])
+    description = _get(content_raw[0], 'value', '') if content_raw else ''
+
+    tags_raw = _get(entry, 'tags', [])
+    subjects = [_get(t, 'term') for t in tags_raw]
+
+    dc_issued = _get(entry, 'dc_issued', '')
+
     import_record = {
-        "title": entry.title,
+        "title": _get(entry, 'title'),
         "source_records": [f"standard_ebooks:{std_ebooks_id}"],
-        "publishers": [entry.publisher],
-        "publish_date": entry.dc_issued[0:4],
-        "authors": [{"name": author.name} for author in entry.authors],
-        "description": entry.content[0].value,
-        "subjects": [tag.term for tag in entry.tags],
+        "publishers": [_get(entry, 'publisher')],
+        "publish_date": dc_issued[0:4],
+        "authors": authors,
+        "description": description,
+        "subjects": subjects,
         "identifiers": {"standard_ebooks": [std_ebooks_id]},
         "languages": [marc_lang_code],
     }
 
     if image_uris:
-        import_record['cover'] = f'{BASE_SE_URL}{next(iter(image_uris))["href"]}'
+        import_record['cover'] = f'{BASE_SE_URL}{image_uris[0]["href"]}'
 
     return import_record
 
