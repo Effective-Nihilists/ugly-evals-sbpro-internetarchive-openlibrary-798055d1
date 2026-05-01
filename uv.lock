@@ -1,0 +1,7 @@
+version = 1
+requires-python = ">=3.12.2, <3.12.3"
+
+[[package]]
+name = "openlibrary"
+version = "1.0.0"
+source = { virtual = "." }
