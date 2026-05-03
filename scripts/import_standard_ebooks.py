@@ -28,24 +28,46 @@ def get_feed(auth: AuthBase):
 
 def map_data(entry) -> dict[str, Any]:
     """Maps Standard Ebooks feed entry to an Open Library import object."""
-    std_ebooks_id = entry.id.replace('https://standardebooks.org/ebooks/', '')
-    image_uris = filter(lambda link: link.rel == IMAGE_REL, entry.links)
+    # Handle both attribute-style (FeedEntryDict) and dict-based entries
+    if isinstance(entry, dict):
+        entry_id = entry['id']
+        entry_language = entry['language']
+        entry_title = entry['title']
+        entry_publisher = entry['publisher']
+        entry_dc_issued = entry['dc_issued']
+        entry_authors = [{'name': a['name']} for a in entry['authors']]
+        entry_content = entry['content']
+        entry_tags = [{'term': t['term']} for t in entry['tags']]
+        entry_links = entry['links']
+    else:
+        entry_id = entry.id
+        entry_language = entry.language
+        entry_title = entry.title
+        entry_publisher = entry.publisher
+        entry_dc_issued = entry.dc_issued
+        entry_authors = entry.authors
+        entry_content = entry.content
+        entry_tags = entry.tags
+        entry_links = entry.links
+
+    std_ebooks_id = entry_id.replace('https://standardebooks.org/ebooks/', '')
+    image_uris = filter(lambda link: link.rel == IMAGE_REL, entry_links)
 
     # Standard ebooks only has English works at this time ; because we don't have an
     # easy way to translate the language codes they store in the feed to the MARC
     # language codes, we're just gonna handle English for now, and have it error
     # if Standard Ebooks ever adds non-English works.
-    marc_lang_code = 'eng' if entry.language.startswith('en-') else None
+    marc_lang_code = 'eng' if entry_language.startswith('en-') else None
     if not marc_lang_code:
-        raise ValueError(f'Feed entry language {entry.language} is not supported.')
+        raise ValueError(f'Feed entry language {entry_language} is not supported.')
     import_record = {
-        "title": entry.title,
+        "title": entry_title,
         "source_records": [f"standard_ebooks:{std_ebooks_id}"],
-        "publishers": [entry.publisher],
-        "publish_date": entry.dc_issued[0:4],
-        "authors": [{"name": author.name} for author in entry.authors],
-        "description": entry.content[0].value,
-        "subjects": [tag.term for tag in entry.tags],
+        "publishers": [entry_publisher],
+        "publish_date": entry_dc_issued[0:4],
+        "authors": entry_authors,
+        "description": entry_content[0]['value'] if isinstance(entry_content[0], dict) else entry_content[0].value,
+        "subjects": [tag['term'] if isinstance(tag, dict) else tag.term for tag in entry_tags],
         "identifiers": {"standard_ebooks": [std_ebooks_id]},
         "languages": [marc_lang_code],
     }
